@@ -76,8 +76,8 @@ class AutoIncrementor {
 app.registerExtension({
     name: "Fannovel16.comfy_video",
     registerCustomNodes(app) {
-        AutoIncrementor.title = "AutoIncrementor"
-        LiteGraph.registerNodeType("AutoIncrementor", AutoIncrementor);
+        AutoIncrementor.title = "Auto Incrementor"
+        LiteGraph.registerNodeType("Auto Incrementor", AutoIncrementor);
         AutoIncrementor.category = "utils"
     }
 });
