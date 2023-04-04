@@ -16,7 +16,7 @@ class AutoIncrementor {
     constructor() {
         this.isVirtualNode = true;
         this.serialize_widgets = true;
-        const indexWidget = ComfyWidgets.INT(this, "index", [undefined, { default: 1, min: 1, max: Number.MAX_SAFE_INTEGER }])
+        const indexWidget = ComfyWidgets.INT(this, "index", [undefined, { default: 1, min: 1, max: Number.MAX_SAFE_INTEGER }]).widget;
         indexWidget.afterQueued = function () { this.value++ }
         this.addOutput("connect to INT widget input", "INT");
     }
