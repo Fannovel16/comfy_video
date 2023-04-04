@@ -14,7 +14,7 @@ INPUT_VIDEO_EXTENSIONS = ('.avi', '.mp4', '.mkv', '.wmv', '.mov', '.mpeg', '.mpg
                           '.ts', '.mts', '.m2ts', '.dv', '.asf', '.amv', '.m4p', '.m4v', '.mod', '.mxf', '.nsv', '.tp', '.trp', '.tsv', '.wtv')
 # Thanks ChatGPT
 DEFAULT_COMMON_FOURCC = "H264"
-KNOWN_AUTO_EXT_CODEC_MAP = {"webm": "VP90", "ogg": "THEO"}
+KNOWN_AUTO_EXT_CODEC_MAP = {".webm": "VP90", ".ogg": "THEO"}
 
 class Video_Frame_Extractor:
     video_input_dir = os.path.join(os.path.dirname(
@@ -41,7 +41,7 @@ class Video_Frame_Extractor:
         ret, frame = cap.read()
         cap.release()
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        return (einops.rearrange(torch.from_numpy(frame), "h w ch -> 1 w h ch"), )
+        return (einops.rearrange(torch.from_numpy(frame), "h w ch -> 1 h w ch"), )
 
 class Write_Frame_To_Video_Gif:
     video_output_dir = os.path.join(os.path.dirname(
@@ -49,46 +49,52 @@ class Write_Frame_To_Video_Gif:
 
     @classmethod
     def INPUT_TYPES(s):
-        os.makedirs(s.video_input_dir, exist_ok=True)
+        os.makedirs(s.video_output_dir, exist_ok=True)
         return {"required": {"file_name": ("STRING", {"default": "Bocchi The Canny Edge.mp4", "multiline": False}),
                              "fourCC": ("STRING", {"default": "AUTO", "multiline": False}),
                              "fps": ("FLOAT", {"default": 24.0, "min": 1.0}),
-                             "frame": ("IMAGE",)}}
+                             "images": ("IMAGE",)}}
 
     RETURN_TYPES = ()
     FUNCTION = "write_frame"
     CATEGORY = "video"
     OUTPUT_NODE = True
 
-    def write_frame(self, file_name, fourCC, fps, frame):
+    def write_frame(self, file_name, fourCC, fps, images):
         fourCC = fourCC.strip().upper()
         assert len(fourCC) == 4, f"InvalidFourCCFormat: Expected length of FourCC input = 4, got {len(fourCC)} ({fourCC})"
         assert fourCC.isalnum(), f"InvalidFourCCFormat: Expected FourCC input is alphanumeric, got {fourCC}"
         save_loc = os.path.join(self.video_output_dir, file_name)
         _, file_ext = os.path.splitext(file_name)
 
-        if file_ext == "gif":
-            frames = []
-            if os.path.exists(save_loc):
-                with Image.open(save_loc) as im:
-                    for i in range(im.n_frames):
-                        im.seek(i)
-                        frames.append(im.copy())
-
-            frames[0].save(save_loc, format='GIF', save_all=True,
-                           append_images=frames[1:], duration=1 / fps, loop=0)
-
-        frame = einops.rearrange(frame, "1 w h ch -> h w ch")
-        frame = cv2.cvtColor(frame.detach().cpu().numpy(), cv2.COLOR_RGB2BGR)
-
         if fourCC == "AUTO":
             fourCC = KNOWN_AUTO_EXT_CODEC_MAP[file_ext] if fourCC in KNOWN_AUTO_EXT_CODEC_MAP else DEFAULT_COMMON_FOURCC
+        out = None
 
-        out = cv2.VideoWriter(save_loc, cv2.VideoWriter_fourcc(*fourCC), fps,
-                              (frame.shape[1], frame.shape[0]))
-        out.write(frame)
-        out.release()
+        for image_tensor in images:
+            if file_ext == ".gif":
+                frames = []
+                if os.path.exists(save_loc):
+                    with Image.open(save_loc) as im:
+                        for i in range(im.n_frames):
+                            im.seek(i)
+                            frames.append(im.copy())
 
+                i = 255. * image_tensor.cpu().numpy()
+                img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+                frames.append(img)
+                frames[0].save(save_loc, format='GIF', save_all=True,
+                            append_images=frames[1:], duration=1 / fps, loop=0)
+                continue
+            #frame = einops.rearrange(image_tensor, "h w ch -> w h ch")
+            frame = cv2.cvtColor(image_tensor.detach().cpu().numpy().clip(0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+            #frame = image_tensor.detach().cpu().numpy().clip(0, 255).astype(np.uint8)
+            if out is None:
+                out = cv2.VideoWriter(save_loc, cv2.VideoWriter_fourcc(*fourCC), fps,
+                                (frame.shape[1], frame.shape[0]))
+            out.write(frame)
+        
+        if out is not None: out.release()
         return {"ui": {"video_name": file_name}}
 
 class Save_Frame_To_Folder:
@@ -111,7 +117,7 @@ class Save_Frame_To_Folder:
     def save_frames(self, folder_name, images, format, prompt=None, extra_pnginfo=None):
         full_output_folder = os.path.join(self.parent_output_dir, folder_name)
         os.makedirs(full_output_folder, exist_ok=True)
-        counter = os.listdir(full_output_folder) + 1
+        counter = len(os.listdir(full_output_folder)) + 1
 
         results = list()
         for image in images:
@@ -134,8 +140,8 @@ class Save_Frame_To_Folder:
             results.append({
                 "filename": file,
                 "folder_name": folder_name,
-                "type": self.type
-            });
+                "format": format
+            })
             counter += 1
 
         return { "ui": { "images": results } }
