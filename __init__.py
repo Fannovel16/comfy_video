@@ -6,6 +6,9 @@ import os
 import torch
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
+import pygifsicle
+from .video_writer_thread import video_writing_queue
+import threading
  
 import json
 import numpy as np
@@ -14,7 +17,9 @@ INPUT_VIDEO_EXTENSIONS = ('.avi', '.mp4', '.mkv', '.wmv', '.mov', '.mpeg', '.mpg
                           '.ts', '.mts', '.m2ts', '.dv', '.asf', '.amv', '.m4p', '.m4v', '.mod', '.mxf', '.nsv', '.tp', '.trp', '.tsv', '.wtv')
 # Thanks ChatGPT
 DEFAULT_COMMON_FOURCC = "H264"
-KNOWN_AUTO_EXT_CODEC_MAP = {".webm": "VP90", ".ogg": "THEO"}
+KNOWN_AUTO_EXT_FOURCC_MAP = {".webm": "VP90", ".ogg": "THEO"}
+
+video_writers = {}
 
 class Video_Frame_Extractor:
     video_input_dir = os.path.join(os.path.dirname(
@@ -34,8 +39,7 @@ class Video_Frame_Extractor:
     def extract_frame(self, video, frame_index):
         cap = cv2.VideoCapture(os.path.join(self.video_input_dir, video))
         frame_count = cap.get(cv2.CAP_PROP_FRAME_COUNT)
-        assert frame_index <= frame_count, f"FrameIndexOutOfBound: For the video '{video}', expected frame_index <= {frame_count}, but got {frame_index}. \n Please note that frame_index should be within the range of available frames for it."
-
+        assert frame_index <= frame_count, f"FrameIndexOutOfBound: For the video '{video}', expected frame_index <= {frame_count}, but got {frame_index}. \n Please note that frame_index should be within the range of available frames for it."        
         # Actual frame_index starts from 0
         cap.set(cv2.CAP_PROP_POS_FRAMES, frame_index - 1)
         ret, frame = cap.read()
@@ -68,8 +72,7 @@ class Write_Frame_To_Video_Gif:
         _, file_ext = os.path.splitext(file_name)
 
         if fourCC == "AUTO":
-            fourCC = KNOWN_AUTO_EXT_CODEC_MAP[file_ext] if fourCC in KNOWN_AUTO_EXT_CODEC_MAP else DEFAULT_COMMON_FOURCC
-        out = None
+            fourCC = KNOWN_AUTO_EXT_FOURCC_MAP[file_ext] if fourCC in KNOWN_AUTO_EXT_FOURCC_MAP else DEFAULT_COMMON_FOURCC
 
         for image_tensor in images:
             if file_ext == ".gif":
@@ -80,21 +83,23 @@ class Write_Frame_To_Video_Gif:
                             im.seek(i)
                             frames.append(im.copy())
 
-                i = 255. * image_tensor.cpu().numpy()
-                img = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
-                frames.append(img)
+                i = 255. * image_tensor.detach().cpu().numpy()
+                frame = Image.fromarray(np.clip(i, 0, 255).astype(np.uint8))
+                frames.append(frame)
                 frames[0].save(save_loc, format='GIF', save_all=True,
                             append_images=frames[1:], duration=1 / fps, loop=0)
+                pygifsicle.optimize(save_loc)
                 continue
-            #frame = einops.rearrange(image_tensor, "h w ch -> w h ch")
-            frame = cv2.cvtColor(image_tensor.detach().cpu().numpy().clip(0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
-            #frame = image_tensor.detach().cpu().numpy().clip(0, 255).astype(np.uint8)
-            if out is None:
-                out = cv2.VideoWriter(save_loc, cv2.VideoWriter_fourcc(*fourCC), fps,
-                                (frame.shape[1], frame.shape[0]))
-            out.write(frame)
-        
-        if out is not None: out.release()
+            i = 255. * image_tensor.detach().cpu().numpy()
+            frame = cv2.cvtColor(np.clip(i, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
+            #if save_loc not in video_writers:
+            #    video_writers[save_loc] = cv2.VideoWriter(save_loc, cv2.VideoWriter_fourcc(*fourCC), fps,
+            #                    (frame.shape[1], frame.shape[0]))
+            #video_writers[save_loc].write(frame)
+            writing_completed_event = threading.Event()
+            video_writing_queue.put(((save_loc, fourCC, fps, (frame.shape[1], frame.shape[0]), frame), writing_completed_event))
+            writing_completed_event.wait()
+            writing_completed_event.clear()
         return {"ui": {"video_name": file_name}}
 
 class Save_Frame_To_Folder:
