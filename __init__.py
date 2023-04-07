@@ -6,7 +6,6 @@ import os
 import torch
 from PIL import Image
 from PIL.PngImagePlugin import PngInfo
-import pygifsicle
 from .video_writer_thread import video_writing_queue
 import threading
  
@@ -88,7 +87,6 @@ class Write_Frame_To_Video_Gif:
                 frames.append(frame)
                 frames[0].save(save_loc, format='GIF', save_all=True,
                             append_images=frames[1:], duration=1 / fps, loop=0)
-                pygifsicle.optimize(save_loc)
                 continue
             i = 255. * image_tensor.detach().cpu().numpy()
             frame = cv2.cvtColor(np.clip(i, 0, 255).astype(np.uint8), cv2.COLOR_RGB2BGR)
